@@ -147,6 +147,13 @@ def set_output(device, number, enabled):
     return tuple(bool(v) for v in device.get('outputs'))
 
 
+def _write_state(device, number, state):
+    write_field(device, number, 'waveform', state.waveform)
+    write_field(device, number, 'frequency', (state.frequency_hz, state.freq_unit))
+    for name in ('amplitude', 'offset', 'duty', 'phase'):
+        write_field(device, number, name, getattr(state, name))
+
+
 def apply_state(device, ch1, ch2):
     """Write full states for both channels (used when loading a preset).
 
@@ -154,12 +161,19 @@ def apply_state(device, ch1, ch2):
     never sees a half-configured signal.
     """
     device.set_outputs(False, False)
-    for number, state in ((1, ch1), (2, ch2)):
-        write_field(device, number, 'waveform', state.waveform)
-        write_field(device, number, 'frequency', (state.frequency_hz, state.freq_unit))
-        for name in ('amplitude', 'offset', 'duty', 'phase'):
-            write_field(device, number, name, getattr(state, name))
+    _write_state(device, 1, ch1)
+    _write_state(device, 2, ch2)
     device.set_outputs(ch1.enabled, ch2.enabled)
+
+
+def apply_channel_state(device, number, state):
+    """Write one channel's full state; the other channel is not touched.
+
+    Only this channel's output is switched off during the update.
+    """
+    device.channel(number).enabled = False
+    _write_state(device, number, state)
+    device.channel(number).enabled = state.enabled
 
 
 # ---- presets -------------------------------------------------------------
@@ -167,6 +181,55 @@ def apply_state(device, ch1, ch2):
 def default_preset_path():
     base = os.environ.get('XDG_CONFIG_HOME') or os.path.join(Path.home(), '.config')
     return Path(base) / 'psg9080-gui' / 'presets.json'
+
+
+@dataclass
+class Preset:
+    """A saved configuration: one channel (applied to CH1 or CH2) or both.
+
+    For a single-channel preset, `source` is the channel it was saved from
+    and is only the default target when applying.
+    """
+    states: tuple  # (ChannelState,) or (ch1, ch2)
+    source: int | None = None
+
+    @classmethod
+    def both(cls, ch1, ch2):
+        return cls((ch1, ch2))
+
+    @classmethod
+    def channel(cls, state, source):
+        return cls((state,), int(source))
+
+    @property
+    def is_single(self):
+        return len(self.states) == 1
+
+    def label(self):
+        return f'CH{self.source}' if self.is_single else 'CH1 + CH2'
+
+    def apply(self, device, target=None):
+        """Write to the device. target picks the channel for single presets."""
+        if self.is_single:
+            apply_channel_state(device, int(target or self.source), self.states[0])
+        else:
+            apply_state(device, *self.states)
+
+    def to_json(self):
+        if self.is_single:
+            return {'kind': 'channel', 'source': self.source,
+                    'channel': self.states[0].to_json()}
+        return {'kind': 'both', 'ch1': self.states[0].to_json(),
+                'ch2': self.states[1].to_json()}
+
+    @classmethod
+    def from_json(cls, data):
+        if data.get('kind') == 'channel':
+            return cls.channel(ChannelState.from_json(data['channel']),
+                               data.get('source', 1))
+        # 'both', or the first format (no 'kind'), which only had both channels
+        return cls.both(ChannelState.from_json(data['ch1']),
+                        ChannelState.from_json(data['ch2']))
 
 
 @dataclass
@@ -178,21 +241,19 @@ class PresetStore:
             data = json.loads(Path(self.path).read_text(encoding='utf-8'))
         except FileNotFoundError:
             return {}
-        return {name: (ChannelState.from_json(p['ch1']), ChannelState.from_json(p['ch2']))
-                for name, p in data.items()}
+        return {name: Preset.from_json(p) for name, p in data.items()}
 
     def save_all(self, presets):
         path = Path(self.path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        data = {name: {'ch1': a.to_json(), 'ch2': b.to_json()}
-                for name, (a, b) in sorted(presets.items())}
+        data = {name: preset.to_json() for name, preset in sorted(presets.items())}
         tmp = path.with_suffix('.tmp')
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding='utf-8')
         tmp.replace(path)  # atomic: a crash never leaves a half-written file
 
-    def put(self, name, ch1, ch2):
+    def put(self, name, preset):
         presets = self.load()
-        presets[name] = (ch1, ch2)
+        presets[name] = preset
         self.save_all(presets)
 
     def delete(self, name):

@@ -1,3 +1,4 @@
+import json
 import re
 import tempfile
 import unittest
@@ -108,12 +109,38 @@ class ModelTests(unittest.TestCase):
             self.assertEqual(store.load(), {})
             a = model.ChannelState(amplitude=Decimal('3.3'), enabled=True)
             b = model.ChannelState(freq_unit=2, frequency_hz=Decimal(1000000))
-            store.put('Teste 1 kHz', a, b)
-            store.put('Outro', b, a)
+            store.put('Ambos', model.Preset.both(a, b))
+            store.put('Só CH2', model.Preset.channel(b, 2))
             loaded = store.load()
-            self.assertEqual(loaded['Teste 1 kHz'], (a, b))
-            store.delete('Outro')
-            self.assertEqual(list(store.load()), ['Teste 1 kHz'])
+            self.assertEqual(loaded['Ambos'], model.Preset.both(a, b))
+            self.assertEqual(loaded['Só CH2'], model.Preset.channel(b, 2))
+            self.assertEqual(loaded['Ambos'].label(), 'CH1 + CH2')
+            self.assertEqual(loaded['Só CH2'].label(), 'CH2')
+            store.delete('Ambos')
+            self.assertEqual(list(store.load()), ['Só CH2'])
+
+    def test_presets_first_format_still_loads(self):
+        # Presets saved by the first GUI version had only ch1/ch2 keys.
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / 'presets.json'
+            a = model.ChannelState(waveform=1).to_json()
+            path.write_text(json.dumps({'testequadrada': {'ch1': a, 'ch2': a}}))
+            preset = model.PresetStore(path).load()['testequadrada']
+            self.assertFalse(preset.is_single)
+            self.assertEqual(preset.states[0].waveform, 1)
+
+    def test_single_channel_preset_leaves_other_channel_alone(self):
+        state = model.ChannelState(waveform=3, frequency_hz=Decimal(500), amplitude=Decimal(2),
+                                   enabled=True)
+        before_ch1 = model.read_channel(self.dev, 1)
+        model.Preset.channel(state, 1).apply(self.dev, target=2)  # saved from CH1, applied to CH2
+        got1, got2 = model.read_all(self.dev)
+        self.assertEqual(got1, before_ch1)
+        self.assertEqual(got2, state)
+        touched = {code for code, _ in self.sim.writes}
+        self.assertFalse(touched & {11, 13, 15, 17, 19, 21})  # no CH1 registers written
+        self.assertEqual(self.sim.writes[0], (10, '1,0'))   # only CH2 output switched off
+        self.assertEqual(self.sim.writes[-1], (10, '1,1'))
 
     def test_waveform_choices(self):
         choices = model.waveform_choices()

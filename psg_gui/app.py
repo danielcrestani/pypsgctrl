@@ -15,9 +15,9 @@ from decimal import Decimal
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
-    QApplication, QComboBox, QDoubleSpinBox, QFormLayout, QGroupBox, QHBoxLayout,
-    QInputDialog, QLabel, QLineEdit, QMainWindow, QMessageBox, QPushButton,
-    QVBoxLayout, QWidget,
+    QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
+    QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
+    QPushButton, QRadioButton, QVBoxLayout, QWidget,
 )
 
 from pypsgctrl import PSG9080, PSGError, PSGTimeoutError
@@ -202,6 +202,69 @@ class ChannelPanel(QGroupBox):
         self.show_field('enabled', state.enabled)
 
 
+class PresetDialog(QDialog):
+    """Asks for a preset name and what to save: CH1, CH2 or both."""
+    BOTH = 0
+
+    def __init__(self, parent, name='', scope=BOTH, existing=()):
+        super().__init__(parent)
+        self.setWindowTitle('Salvar preset')
+        self.setMinimumWidth(380)
+        self._existing = set(existing)
+
+        self.name = QLineEdit(name)
+        self.name.setPlaceholderText('ex.: quadrada 1 kHz 5 V')
+        self.name.selectAll()
+
+        self.scope = QButtonGroup(self)
+        scope_row = QHBoxLayout()
+        for value, label in ((self.BOTH, 'Ambos os canais'), (1, 'Só CH1'), (2, 'Só CH2')):
+            button = QRadioButton(label)
+            button.setChecked(value == scope)
+            self.scope.addButton(button, value)
+            scope_row.addWidget(button)
+        scope_row.addStretch(1)
+
+        hint = QLabel('Um preset de um canal pode ser aplicado depois no CH1 ou no CH2.')
+        hint.setWordWrap(True)
+        hint.setStyleSheet('color: palette(mid);')
+
+        form = QFormLayout()
+        form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.addRow('Nome', self.name)
+        form.addRow('Salvar', scope_row)
+
+        buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
+                                   QDialogButtonBox.StandardButton.Cancel)
+        buttons.accepted.connect(self._accept)
+        buttons.rejected.connect(self.reject)
+        self._save = buttons.button(QDialogButtonBox.StandardButton.Save)
+        self._save.setText('Salvar')
+        buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('Cancelar')
+        self.name.textChanged.connect(lambda t: self._save.setEnabled(bool(t.strip())))
+        self._save.setEnabled(bool(name.strip()))
+
+        layout = QVBoxLayout(self)
+        layout.setSpacing(10)
+        layout.addLayout(form)
+        layout.addWidget(hint)
+        layout.addWidget(buttons)
+
+    def _accept(self):
+        name = self.preset_name()
+        if name in self._existing and QMessageBox.question(
+                self, APP_NAME, f'Já existe um preset "{name}". Substituir?') != YES:
+            return
+        self.accept()
+
+    def preset_name(self):
+        return self.name.text().strip()
+
+    def channel(self):
+        """0 for both channels, otherwise 1 or 2."""
+        return self.scope.checkedId()
+
+
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -249,6 +312,12 @@ class MainWindow(QMainWindow):
         # presets
         self.preset_box = QComboBox()
         self.preset_box.setMinimumWidth(200)
+        self.preset_box.currentIndexChanged.connect(self._preset_selected)
+        self.target_label = QLabel('em')
+        self.target = QComboBox()
+        self.target.addItem('CH1', 1)
+        self.target.addItem('CH2', 2)
+        self.target.setToolTip('Canal que recebe um preset de um canal só')
         apply_btn = QPushButton('Aplicar')
         apply_btn.clicked.connect(self.apply_preset)
         save_btn = QPushButton('Salvar atual…')
@@ -258,6 +327,8 @@ class MainWindow(QMainWindow):
         presets = QHBoxLayout()
         presets.addWidget(QLabel('Presets'))
         presets.addWidget(self.preset_box, 1)
+        presets.addWidget(self.target_label)
+        presets.addWidget(self.target)
         for b in (apply_btn, save_btn, del_btn):
             presets.addWidget(b)
         self._preset_buttons = (apply_btn, save_btn, del_btn)
@@ -321,7 +392,7 @@ class MainWindow(QMainWindow):
     def _set_connected(self, connected):
         self.connect_btn.setText('Desconectar' if connected else 'Conectar')
         self.port.setEnabled(not connected)
-        for widget in (self.read_btn, self.all_off_btn, *self._preset_buttons,
+        for widget in (self.read_btn, self.all_off_btn, self.target, *self._preset_buttons,
                        *self.panels.values()):
             widget.setEnabled(connected)
         self._preset_buttons[2].setEnabled(True)  # deleting a preset works offline
@@ -432,46 +503,67 @@ class MainWindow(QMainWindow):
 
     # ---- presets
     def reload_presets(self, select=None):
-        names = sorted(self.presets.load())
-        self.preset_box.clear()
-        self.preset_box.addItems(names)
-        if select in names:
-            self.preset_box.setCurrentText(select)
+        presets = self.presets.load()
+        with blocked(self.preset_box):
+            self.preset_box.clear()
+            for name in sorted(presets, key=str.casefold):
+                self.preset_box.addItem(f'{name}   [{presets[name].label()}]', name)
+            index = self.preset_box.findData(select)
+            self.preset_box.setCurrentIndex(index if index >= 0 else 0)
+        self._preset_selected()
+
+    def _selected_preset(self):
+        name = self.preset_box.currentData()
+        return name, (self.presets.load().get(name) if name else None)
+
+    def _preset_selected(self, _index=None):
+        _name, preset = self._selected_preset()
+        single = preset is not None and preset.is_single
+        self.target_label.setVisible(single)
+        self.target.setVisible(single)
+        if single:
+            self.target.setCurrentIndex(self.target.findData(preset.source))
 
     def save_preset(self):
         device = self.device
         if device is None:
             return
-        name, ok = QInputDialog.getText(self, APP_NAME, 'Nome do preset:',
-                                        text=self.preset_box.currentText())
-        name = name.strip()
-        if not ok or not name:
+        name, current = self._selected_preset()
+        scope = (current.source if current is not None and current.is_single
+                 else PresetDialog.BOTH)
+        dialog = PresetDialog(self, name or '', scope, existing=self.presets.load())
+        if dialog.exec() != QDialog.DialogCode.Accepted:
             return
-        if name in self.presets.load() and QMessageBox.question(
-                self, APP_NAME, f'Substituir o preset "{name}"?') != YES:
-            return
+        name, channel = dialog.preset_name(), dialog.channel()
 
-        def store(states):
-            self.presets.put(name, *states)
+        def store(preset):
+            self.presets.put(name, preset)
             self.reload_presets(select=name)
-            self.message(f'Preset "{name}" salvo.')
-        self.run(lambda: model.read_all(device), store)
+            self.message(f'Preset "{name}" salvo ({preset.label()}).')
+
+        if channel == PresetDialog.BOTH:
+            self.run(lambda: model.Preset.both(*model.read_all(device)), store)
+        else:
+            self.run(lambda: model.Preset.channel(model.read_channel(device, channel), channel),
+                     store)
 
     def apply_preset(self):
-        device, name = self.device, self.preset_box.currentText()
-        if device is None or not name:
+        device = self.device
+        name, preset = self._selected_preset()
+        if device is None or preset is None:
             return
-        ch1, ch2 = self.presets.load()[name]
+        target = self.target.currentData() if preset.is_single else None
+        where = f' no CH{target}' if target else ''
 
         def show(states):
             self.panels[1].show_state(states[0])
             self.panels[2].show_state(states[1])
-            self.message(f'Preset "{name}" aplicado.')
-        self.run(lambda: (model.apply_state(device, ch1, ch2), model.read_all(device))[1], show)
+            self.message(f'Preset "{name}" aplicado{where}.')
+        self.run(lambda: (preset.apply(device, target), model.read_all(device))[1], show)
 
     def delete_preset(self):
-        name = self.preset_box.currentText()
-        if name and QMessageBox.question(
+        name, preset = self._selected_preset()
+        if preset is not None and QMessageBox.question(
                 self, APP_NAME, f'Excluir o preset "{name}"?') == YES:
             self.presets.delete(name)
             self.reload_presets()
