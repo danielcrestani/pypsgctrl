@@ -20,6 +20,12 @@ classifiers = [
 requires-python = ">=3.10"
 dependencies = ["pyserial>=3.5"]
 
+[project.optional-dependencies]
+gui = ["PySide6>=6.5"]
+
+[project.scripts]
+psg-gui = "psg_gui.app:main"
+
 [project.urls]
 Repository = "https://github.com/realspinner/pypsgctrl"
 Documentation = "https://github.com/realspinner/pypsgctrl/blob/main/docs/api_reference_en.md"
@@ -27,4 +33,4 @@ Issues = "https://github.com/realspinner/pypsgctrl/issues"
 
 [tool.setuptools.packages.find]
 where = ["."]
-include = ["pypsgctrl*"]
+include = ["pypsgctrl*", "psg_gui*"]
