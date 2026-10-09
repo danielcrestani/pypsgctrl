@@ -24,7 +24,7 @@ class PSG9080:
     # @param owns_transport Close the transport on close(); defaults to False.
     # @param response_timeout Positive finite response deadline in seconds.
     def __init__(self, transport: Transport, *, owns_transport=False, response_timeout=1.0):
-        if _decimal(response_timeout) <= 0:
+        if isinstance(response_timeout, bool) or _decimal(response_timeout) <= 0:
             raise ValueError("response_timeout must be positive")
         self.response_timeout = float(response_timeout)
         self.transport = transport
@@ -43,8 +43,9 @@ class PSG9080:
     # @exception ValueError Invalid input value.
     @classmethod
     def connect(cls, port: str, *, timeout: float = 1.0):
-        if timeout <= 0 or not _decimal(timeout).is_finite():
+        if isinstance(timeout, bool) or _decimal(timeout) <= 0:
             raise ValueError('timeout must be positive and finite')
+        timeout = float(timeout)
         import serial
         return cls(serial.serial_for_url(port, baudrate=115200, bytesize=8,
                    parity='N', stopbits=1, timeout=timeout, write_timeout=timeout),
@@ -84,6 +85,11 @@ class PSG9080:
         with self._lock:
             if self._closed:
                 raise PSGError('Connection is closed')
+            # Drop stale bytes (a late reply after a timeout, or power-up
+            # noise) so they cannot be mistaken for this command's response.
+            reset = getattr(self.transport, 'reset_input_buffer', None)
+            if callable(reset):
+                reset()
             if self.transport.write(command) != len(command):
                 raise ProtocolError('Incomplete transport write')
             deadline = time.monotonic() + self.response_timeout

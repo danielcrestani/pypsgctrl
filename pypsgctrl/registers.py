@@ -80,7 +80,7 @@ REGISTERS = {
 CHANNEL_REGISTERS = {
     'waveform': _reg(11, maximum=199),
     'amplitude': _reg(15, scale=1000),
-    'offset': _reg(17, scale=100, offset=1000, minimum=-10),
+    'offset': _reg(17, scale=100, offset=1000, minimum=-10, maximum=10),
     'duty': _reg(19, scale=100, maximum=100),
     'phase': _reg(21, scale=100, maximum='359.99'),
     'modulation_frequency': _reg(43, scale=1000, maximum=1000000),

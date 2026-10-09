@@ -136,6 +136,30 @@ class DriverTests(unittest.TestCase):
         d.set('interface', 0, 1, 0, 10)
         self.assertEqual(fake.commands[-1], b':w24=0,1,0,a.\r\n')
 
+    def test_stale_input_is_discarded(self):
+        # A late reply left over from a timed-out command must not poison the next one.
+        class Flushable(Fake):
+            def __init__(self, stale, *replies):
+                super().__init__(stale)
+                self.replies = list(replies)
+            def reset_input_buffer(self):
+                self.data = bytearray(self.replies.pop(0).encode('ascii'))
+        fake = Flushable(':r10=1,1.\r\n', ':r15=5000.\r\n')
+        self.assertEqual(PSG9080(fake).ch1.amplitude, Decimal(5))
+
+    def test_offset_upper_limit(self):
+        # Positive offset is bounded like the negative side (raw 2000 = +10 V).
+        fake = Fake()
+        with self.assertRaises(ValueError): PSG9080(fake).ch1.offset = '10.01'
+        self.assertEqual(fake.commands, [])
+
+    def test_timeout_validation(self):
+        # Non-numeric or boolean timeouts raise ValueError, not TypeError.
+        for bad in ('abc', True, 0, -1, float('inf'), float('nan')):
+            with self.subTest(bad=bad):
+                with self.assertRaises(ValueError): PSG9080.connect('loop://', timeout=bad)
+                with self.assertRaises(ValueError): PSG9080(Fake(), response_timeout=bad)
+
     def test_serial_settings(self):
         # Assert 115200 baud, 8-N-1, timeouts, and owned-port lifecycle.
         with patch('serial.serial_for_url',return_value=Fake()) as factory:

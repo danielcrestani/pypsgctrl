@@ -77,7 +77,7 @@ All properties below support reading and writing.
 | --- | --- | --- | --- | --- |
 | `waveform` | 11 / 12 | code | 1 | 0..21 or 101..199 |
 | `amplitude` | 15 / 16 | Vpp | 0.001 | 0..device limit |
-| `offset` | 17 / 18 | V | 0.01 | -10..device limit |
+| `offset` | 17 / 18 | V | 0.01 | -10..10 |
 | `duty` | 19 / 20 | % | 0.01 | 0..100 |
 | `phase` | 21 / 22 | ° | 0.01 | 0..359.99 |
 | `modulation_frequency` | 43 / 44 | Hz | 0.001 | 0..1000000 |
