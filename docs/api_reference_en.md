@@ -358,7 +358,7 @@ to only one instance/process.
 
 ## Protocol ambiguities and hardware verification
 
-* Frequency units 3/4 follow the interpretation of the examples; not hardware-verified.
+* Frequency units 3/4 verified on hardware (PSG9080, 2026-10-09).
 * Width/period wire maxima conflict with the document's physical maxima.
   Conservative limits of 0.4/4 s and steps of 1/10 ns are used.
 * Command 63 is described with two fields in the text but one mode in the table.
