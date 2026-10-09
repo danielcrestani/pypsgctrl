@@ -231,8 +231,9 @@ class PresetDialog(QDialog):
             scope_row.addWidget(button)
         scope_row.addStretch(1)
 
-        hint = QLabel('Preset de um canal pode ser aplicado depois no CH1 ou no CH2.')
-        hint.setWordWrap(True)
+        # One short line that follows the selection. No word wrap: a wrapped
+        # QLabel inside a QFormLayout gets too little height and is clipped.
+        hint = QLabel()
         hint_font = hint.font()
         hint_font.setPointSizeF(hint_font.pointSizeF() * 0.9)
         hint.setFont(hint_font)
@@ -252,6 +253,13 @@ class PresetDialog(QDialog):
         form.addRow('Nome', self.name)
         form.addRow('Canais', scope_row)
         form.addRow('', hint)  # aligned under the options it explains
+
+        hints = {self.BOTH: 'Salva os dois canais juntos.',
+                 1: 'Pode ser aplicado depois no CH1 ou no CH2.',
+                 2: 'Pode ser aplicado depois no CH1 ou no CH2.'}
+        self.scope.idToggled.connect(
+            lambda value, on: on and hint.setText(hints[value]))
+        hint.setText(hints.get(self.scope.checkedId(), ''))
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
                                    QDialogButtonBox.StandardButton.Cancel)
