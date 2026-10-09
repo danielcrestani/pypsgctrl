@@ -13,7 +13,7 @@ from contextlib import contextmanager
 from decimal import Decimal
 
 from PySide6.QtCore import QObject, QSettings, Qt, Signal
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QPalette
 from PySide6.QtWidgets import (
     QApplication, QButtonGroup, QComboBox, QDialog, QDialogButtonBox, QDoubleSpinBox,
     QFormLayout, QGroupBox, QHBoxLayout, QLabel, QLineEdit, QMainWindow, QMessageBox,
@@ -209,30 +209,49 @@ class PresetDialog(QDialog):
     def __init__(self, parent, name='', scope=BOTH, existing=()):
         super().__init__(parent)
         self.setWindowTitle('Salvar preset')
-        self.setMinimumWidth(380)
+        self.setMinimumWidth(440)
+        # Paint our own background: some Linux themes/compositors otherwise
+        # leave the dialog see-through, showing the window behind it.
+        self.setAutoFillBackground(True)
         self._existing = set(existing)
 
         self.name = QLineEdit(name)
         self.name.setPlaceholderText('ex.: quadrada 1 kHz 5 V')
+        self.name.setClearButtonEnabled(True)
+        self.name.setMinimumHeight(30)
         self.name.selectAll()
 
         self.scope = QButtonGroup(self)
         scope_row = QHBoxLayout()
-        for value, label in ((self.BOTH, 'Ambos os canais'), (1, 'Só CH1'), (2, 'Só CH2')):
+        scope_row.setSpacing(18)
+        for value, label in ((self.BOTH, 'Ambos'), (1, 'CH1'), (2, 'CH2')):
             button = QRadioButton(label)
             button.setChecked(value == scope)
             self.scope.addButton(button, value)
             scope_row.addWidget(button)
         scope_row.addStretch(1)
 
-        hint = QLabel('Um preset de um canal pode ser aplicado depois no CH1 ou no CH2.')
+        hint = QLabel('Preset de um canal pode ser aplicado depois no CH1 ou no CH2.')
         hint.setWordWrap(True)
-        hint.setStyleSheet('color: palette(mid);')
+        hint_font = hint.font()
+        hint_font.setPointSizeF(hint_font.pointSizeF() * 0.9)
+        hint.setFont(hint_font)
+        # Secondary text: 65 % text colour over the background, readable in
+        # both light and dark themes (palette(mid) vanishes on dark ones).
+        pal = self.palette()
+        fg, bg = pal.color(QPalette.ColorRole.WindowText), pal.color(QPalette.ColorRole.Window)
+        mix = [round(0.65 * f + 0.35 * g) for f, g in
+               zip(fg.getRgb()[:3], bg.getRgb()[:3])]
+        hint.setStyleSheet('color: rgb({}, {}, {});'.format(*mix))
 
         form = QFormLayout()
         form.setFieldGrowthPolicy(QFormLayout.FieldGrowthPolicy.ExpandingFieldsGrow)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignRight | Qt.AlignmentFlag.AlignVCenter)
+        form.setHorizontalSpacing(14)
+        form.setVerticalSpacing(12)
         form.addRow('Nome', self.name)
-        form.addRow('Salvar', scope_row)
+        form.addRow('Canais', scope_row)
+        form.addRow('', hint)  # aligned under the options it explains
 
         buttons = QDialogButtonBox(QDialogButtonBox.StandardButton.Save |
                                    QDialogButtonBox.StandardButton.Cancel)
@@ -240,15 +259,17 @@ class PresetDialog(QDialog):
         buttons.rejected.connect(self.reject)
         self._save = buttons.button(QDialogButtonBox.StandardButton.Save)
         self._save.setText('Salvar')
+        self._save.setDefault(True)  # Enter saves
         buttons.button(QDialogButtonBox.StandardButton.Cancel).setText('Cancelar')
         self.name.textChanged.connect(lambda t: self._save.setEnabled(bool(t.strip())))
         self._save.setEnabled(bool(name.strip()))
 
         layout = QVBoxLayout(self)
-        layout.setSpacing(10)
+        layout.setContentsMargins(18, 18, 18, 14)
+        layout.setSpacing(16)
         layout.addLayout(form)
-        layout.addWidget(hint)
         layout.addWidget(buttons)
+        self.name.setFocus()
 
     def _accept(self):
         name = self.preset_name()
